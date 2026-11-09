@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>CyberLab Analytics</title>
+  <link rel="stylesheet" href="{{ url_for('cyberlab_local_dashboard.static', filename='cyberlab_dashboard.css') if mode == 'local' else url_for('cyberlab_professor_dashboard.static', filename='cyberlab_dashboard.css') }}">
+</head>
+<body data-mode="{{ mode }}">
+<div class="shell">
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-mark">C</span><span>CYBERLAB</span></div>
+    <p class="subbrand">Security Analytics</p>
+    <div class="nav-label">WORKSPACE</div>
+    <a class="nav active" href="#">▦ &nbsp; Dashboard</a>
+    <a class="nav" href="#achados">◇ &nbsp; Achados de segurança</a>
+    <a class="nav" href="#historico">◷ &nbsp; Histórico</a>
+    <div class="nav-label">RELATÓRIOS</div>
+    <a class="nav" href="/"><span>↗ &nbsp; Aplicação</span></a>
+  </aside>
+  <main class="main">
+    <header class="topbar"><div class="crumb">Workspace / {{ application }} / Analytics</div><div class="user-pill">{{ 'Professor' if mode == 'professor' else 'Equipe ' ~ scenario }}</div></header>
+    <section class="heading">
+      <div><div class="eyebrow">CYBERLAB SECURITY INTELLIGENCE</div><h1>{{ 'Painel consolidado das equipes' if mode == 'professor' else 'Dashboard de Segurança' }}</h1>
+      <p>{{ 'Acompanhamento geral dos dez cenários e relatórios recebidos.' if mode == 'professor' else application ~ ' · Cenário ' ~ scenario ~ ' · Dados lidos automaticamente da pasta relatorios/' }}</p></div>
+      <button class="refresh" onclick="loadDashboard()">↻ Atualizar dados</button>
+    </section>
+    <section class="kpis" id="kpis">
+      <article class="kpi"><span>{{ 'Relatórios recebidos' if mode == 'professor' else 'Verificações executadas' }}</span><strong id="kpi-one">—</strong><small>Dados do JSON</small></article>
+      <article class="kpi"><span>{{ 'Indicadores detectados' if mode == 'professor' else 'Indicadores detectados' }}</span><strong id="kpi-two">—</strong><small>Achados registrados</small></article>
+      <article class="kpi"><span>Riscos altos e críticos</span><strong id="kpi-three">—</strong><small>Prioridade de tratamento</small></article>
+      <article class="kpi"><span>{{ 'Equipes pendentes' if mode == 'professor' else 'Relatórios disponíveis' }}</span><strong id="kpi-four">—</strong><small>Controle de entregas</small></article>
+    </section>
+    <section class="grid-panels">
+      <article class="panel">
+        <div class="panel-head"><div><h2>Distribuição por severidade</h2><p>Classificação dos achados registrados</p></div><span class="live">● Atualizado</span></div>
+        <div id="severity-chart" class="severity-chart"></div>
+      </article>
+      <article class="panel">
+        <div class="panel-head"><div><h2>{{ 'Equipes por cenário' if mode == 'professor' else 'Resumo da execução' }}</h2><p>{{ 'Indicadores por aplicação' if mode == 'professor' else 'Resultado da última análise' }}</p></div></div>
+        <div id="summary-list" class="summary-list"></div>
+      </article>
+    </section>
+    <section class="panel table-panel" id="achados">
+      <div class="panel-head"><div><h2>{{ 'Relatórios das equipes' if mode == 'professor' else 'Achados detalhados' }}</h2><p>{{ 'Clique em um relatório para consultar seus resultados.' if mode == 'professor' else 'Evidências, status e recomendações identificadas pelo scanner.' }}</p></div><input id="filter" class="filter" placeholder="Filtrar..." oninput="filterRows()"></div>
+      <div class="table-wrap"><table><thead id="table-head"></thead><tbody id="table-body"></tbody></table></div>
+    </section>
+    <footer>CYBERLAB · Ambiente didático · Dados fictícios · Estácio</footer>
+  </main>
+</div>
+<script>
+const MODE = document.body.dataset.mode;
+let cachedRows = [];
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const severityOrder = ['critico','alto','medio','baixo','informativo','outros'];
+const severityLabel = {critico:'Crítico',alto:'Alto',medio:'Médio',baixo:'Baixo',informativo:'Informativo',outros:'Outros'};
+function badge(sev){return `<span class="badge ${esc(sev)}">${esc(severityLabel[sev] || sev)}</span>`}
+function renderSeverity(counts){
+ const total = Object.values(counts || {}).reduce((a,b)=>a+b,0) || 1;
+ document.getElementById('severity-chart').innerHTML = severityOrder.map(k=>{
+   const n=(counts||{})[k]||0, pct=Math.round(n/total*100);
+   return `<div class="sev-row"><div class="sev-label"><span>${severityLabel[k]}</span><b>${n}</b></div><div class="bar"><i class="${k}" style="width:${pct}%"></i></div></div>`;
+ }).join('');
+}
+function renderLocal(data){
+ const report=data.latest, findings=(report?.findings)||[], summary=report?.summary||{};
+ document.getElementById('kpi-one').textContent=summary.total_checks ?? findings.length;
+ document.getElementById('kpi-two').textContent=summary.indicators ?? findings.filter(x=>x.status==='indicador_detectado').length;
+ document.getElementById('kpi-three').textContent=(data.severity.alto||0)+(data.severity.critico||0);
+ document.getElementById('kpi-four').textContent=data.reports.length;
+ renderSeverity(data.severity);
+ document.getElementById('summary-list').innerHTML = `<div class="summary-line"><span>Arquivo atual</span><b>${esc(data.reports[0]?.file || 'Nenhum JSON encontrado')}</b></div><div class="summary-line"><span>Última atualização</span><b>${esc(data.reports[0]?.date || '—')}</b></div><div class="summary-line"><span>Escopo</span><b>Ambiente local</b></div>`;
+ document.getElementById('table-head').innerHTML='<tr><th>Achado</th><th>Severidade</th><th>Status</th><th>Rota</th><th>Evidência / recomendação</th></tr>';
+ cachedRows=findings.map(f=>`<tr><td><b>${esc(f.title)}</b></td><td>${badge(String(f.severity||'outros').toLowerCase())}</td><td>${esc(f.status)}</td><td><code>${esc(f.route)}</code></td><td><details><summary>Ver detalhes</summary><p><b>Evidência:</b> ${esc(f.evidence)}</p><p><b>Recomendação:</b> ${esc(f.recommendation)}</p></details></td></tr>`);
+ renderRows();
+}
+function renderProfessor(data){
+ const teams=data.teams||[];
+ document.getElementById('kpi-one').textContent=data.received;
+ document.getElementById('kpi-two').textContent=data.indicator_total;
+ document.getElementById('kpi-three').textContent=(data.totals.alto||0)+(data.totals.critico||0);
+ document.getElementById('kpi-four').textContent=data.pending;
+ renderSeverity(data.totals);
+ document.getElementById('summary-list').innerHTML=teams.length ? teams.map(t=>`<div class="summary-line"><span>Cenário ${esc(t.scenario)} · ${esc(t.application)}</span><b>${t.indicators} achados</b></div>`).join('') : '<p class="empty">Aguardando relatórios das equipes.</p>';
+ document.getElementById('table-head').innerHTML='<tr><th>Cenário</th><th>Aplicação</th><th>Verificações</th><th>Indicadores</th><th>Data</th><th>Arquivo</th></tr>';
+ cachedRows=teams.map(t=>`<tr><td><b>${esc(t.scenario)}</b></td><td>${esc(t.application)}</td><td>${t.checks}</td><td>${t.indicators}</td><td>${esc(t.date)}</td><td><code>${esc(t.file)}</code></td></tr>`);
+ renderRows();
+}
+function renderRows(){
+ document.getElementById('table-body').innerHTML=cachedRows.length?cachedRows.join(''):'<tr><td colspan="6" class="empty">Nenhum dado disponível. Execute o scanner ou importe relatórios.</td></tr>';
+}
+function filterRows(){
+ const q=document.getElementById('filter').value.toLowerCase();
+ document.querySelectorAll('#table-body tr').forEach(r=>r.style.display=r.textContent.toLowerCase().includes(q)?'':'none');
+}
+async function loadDashboard(){
+ try{
+  const r=await fetch('/dashboard/api/data',{cache:'no-store'}); if(!r.ok) throw new Error('HTTP '+r.status);
+  const data=await r.json(); MODE==='professor'?renderProfessor(data):renderLocal(data);
+ }catch(e){document.getElementById('summary-list').innerHTML='<p class="empty">Não foi possível ler os dados: '+esc(e.message)+'</p>';}
+}
+loadDashboard();
+setInterval(loadDashboard,30000);
+</script>
+</body></html>
